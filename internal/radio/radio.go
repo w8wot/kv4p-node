@@ -159,3 +159,87 @@ func (r *Radio) sendDesiredState() error {
 		}
 	}
 }
+
+func (r *Radio) ReadVendorFrame() (protocol.VendorFrame, error) {
+	for {
+		frame, err := r.client.ReadFrame()
+		if err != nil {
+			return protocol.VendorFrame{}, err
+		}
+
+		vendor, err := protocol.DecodeVendorFrame(frame)
+		if err != nil {
+			continue
+		}
+
+		return *vendor, nil
+	}
+}
+
+// ConfigureParrot configures simplex RX/TX operation and permits transmission.
+// It does not key the transmitter.
+func (r *Radio) ConfigureParrot(frequencyMHz float32, squelch byte) error {
+	if frequencyMHz < r.Hello.MinFrequencyMHz ||
+		frequencyMHz > r.Hello.MaxFrequencyMHz {
+		return fmt.Errorf(
+			"frequency %.3f MHz is outside radio range %.3f-%.3f MHz",
+			frequencyMHz,
+			r.Hello.MinFrequencyMHz,
+			r.Hello.MaxFrequencyMHz,
+		)
+	}
+
+	if squelch > 8 {
+		return fmt.Errorf("squelch must be 0-8")
+	}
+
+	r.sequence++
+
+	r.desired.Sequence = r.sequence
+	r.desired.MemoryID = -1
+	r.desired.TXFrequencyMHz = frequencyMHz
+	r.desired.RXFrequencyMHz = frequencyMHz
+	r.desired.Squelch = squelch
+	r.desired.Flags =
+		protocol.HostStateRadioConfigValid |
+			protocol.HostStateRXAudioOpen |
+			protocol.HostStateRSSIEnabled |
+			protocol.HostStateFilterHigh |
+			protocol.HostStateFilterLow |
+			protocol.HostStateTXAllowed |
+			protocol.HostStateStatusReports
+
+	return r.sendDesiredState()
+}
+
+func (r *Radio) SetPTT(enabled bool) error {
+	r.sequence++
+	r.desired.Sequence = r.sequence
+
+	if enabled {
+		r.desired.Flags |= protocol.HostStatePTTRequested
+		r.desired.Flags &^= protocol.HostStateRXAudioOpen
+	} else {
+		r.desired.Flags &^= protocol.HostStatePTTRequested
+		r.desired.Flags |= protocol.HostStateRXAudioOpen
+	}
+
+	return r.sendDesiredState()
+}
+
+func (r *Radio) SendOpusPacket(packet []byte) error {
+	if len(packet) == 0 {
+		return fmt.Errorf("cannot send empty Opus packet")
+	}
+
+	frame := protocol.EncodeVendorFrame(
+		protocol.CommandHostTXAudio,
+		packet,
+	)
+
+	if err := r.client.Write(frame); err != nil {
+		return fmt.Errorf("send Opus packet: %w", err)
+	}
+
+	return nil
+}
