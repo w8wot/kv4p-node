@@ -22,7 +22,10 @@ const (
 	HostStateStatusReports     uint16 = 1 << 12
 )
 
-const DeviceStateSize = 26
+const (
+	LegacyDeviceStateSize = 24
+	DeviceStateSize       = 26
+)
 
 type DeviceState struct {
 	AppliedSequence uint32
@@ -38,18 +41,19 @@ type DeviceState struct {
 	Mode            byte
 	LastError       byte
 	LatestRSSI      byte
+	LatestRSSIValid bool
 }
 
 func ParseDeviceState(payload []byte) (DeviceState, error) {
-	if len(payload) < DeviceStateSize {
+	if len(payload) < LegacyDeviceStateSize {
 		return DeviceState{}, fmt.Errorf(
-			"device-state payload too short: got %d bytes, need %d",
+			"device-state payload too short: got %d bytes, need at least %d",
 			len(payload),
-			DeviceStateSize,
+			LegacyDeviceStateSize,
 		)
 	}
 
-	return DeviceState{
+	state := DeviceState{
 		AppliedSequence: binary.LittleEndian.Uint32(payload[0:4]),
 		MemoryID:        int32(binary.LittleEndian.Uint32(payload[4:8])),
 		Flags:           binary.LittleEndian.Uint16(payload[8:10]),
@@ -65,9 +69,15 @@ func ParseDeviceState(payload []byte) (DeviceState, error) {
 		CTCSSRX:     payload[21],
 		RadioStatus: payload[22],
 		Mode:        payload[23],
-		LastError:   payload[24],
-		LatestRSSI:  payload[25],
-	}, nil
+	}
+
+	if len(payload) >= DeviceStateSize {
+		state.LastError = payload[24]
+		state.LatestRSSI = payload[25]
+		state.LatestRSSIValid = true
+	}
+
+	return state, nil
 }
 
 func (s DeviceState) HasFlag(flag uint16) bool {

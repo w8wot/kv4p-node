@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/binary"
 	"flag"
 	"fmt"
 	"log"
@@ -8,6 +9,7 @@ import (
 	"os/signal"
 	"time"
 
+	"github.com/w8wot/kv4p-node/internal/audio"
 	"github.com/w8wot/kv4p-node/internal/client"
 	"github.com/w8wot/kv4p-node/internal/protocol"
 	"github.com/w8wot/kv4p-node/internal/transport"
@@ -32,7 +34,14 @@ const (
 func main() {
 	freq := flag.Float64("freq", 146.520, "Simplex frequency in MHz")
 	squelch := flag.Int("squelch", 3, "Radio squelch level 0-8")
+	output := flag.String("output", "capture-parrot.wav", "Saved receive WAV filename")
+	txPace := flag.Duration("tx-pace", txFramePace, "Delay between replayed audio packets")
 	flag.Parse()
+
+	decoder, err := audio.NewDecoder()
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	portName, err := transport.FindKV4P()
 	if err != nil {
@@ -186,9 +195,16 @@ func main() {
 			captured := packets
 			packets = nil
 
+			if err := decodeToWAV(decoder, captured, *output); err != nil {
+				log.Printf("Save WAV failed: %v", err)
+			} else {
+				log.Printf("Saved received audio to %s", *output)
+			}
+
 			sequence++
 
-			if err := replay(c, &desired, sequence, captured); err != nil {
+			// Replay the exact original Opus packets received from the KV4P.
+			if err := replay(c, &desired, sequence, captured, *txPace); err != nil {
 				log.Printf("Replay failed: %v", err)
 
 				sequence++
@@ -208,6 +224,7 @@ func replay(
 	desired *protocol.HostDesiredState,
 	sequence uint32,
 	packets [][]byte,
+	txFramePace time.Duration,
 ) error {
 	time.Sleep(preTXDelay)
 
@@ -261,4 +278,90 @@ func sendDesired(c *client.Client, state protocol.HostDesiredState) error {
 	}
 
 	return c.Write(frame)
+}
+func decodeToWAV(
+	decoder interface {
+		Decode([]byte) ([]int16, error)
+	},
+	packets [][]byte,
+	filename string,
+) error {
+	var pcm []int16
+
+	for index, packet := range packets {
+		samples, err := decoder.Decode(packet)
+		if err != nil {
+			return fmt.Errorf("decode packet %d: %w", index+1, err)
+		}
+
+		pcm = append(pcm, samples...)
+	}
+
+	if len(pcm) == 0 {
+		return fmt.Errorf("no PCM audio was decoded")
+	}
+
+	if err := writeWAV(filename, pcm, audio.SampleRate); err != nil {
+		return err
+	}
+
+	duration := time.Duration(
+		float64(len(pcm)) /
+			float64(audio.SampleRate) *
+			float64(time.Second),
+	)
+
+	log.Printf(
+		"Decoded %d PCM samples at %d Hz, duration approximately %s",
+		len(pcm),
+		audio.SampleRate,
+		duration,
+	)
+
+	return nil
+}
+
+func writeWAV(filename string, samples []int16, sampleRate int) error {
+	file, err := os.Create(filename)
+	if err != nil {
+		return fmt.Errorf("create WAV: %w", err)
+	}
+	defer file.Close()
+
+	const (
+		channels      = 1
+		bitsPerSample = 16
+		headerSize    = 44
+	)
+
+	dataSize := len(samples) * 2
+	byteRate := sampleRate * channels * bitsPerSample / 8
+	blockAlign := channels * bitsPerSample / 8
+	riffSize := 36 + dataSize
+
+	header := make([]byte, headerSize)
+
+	copy(header[0:4], "RIFF")
+	binary.LittleEndian.PutUint32(header[4:8], uint32(riffSize))
+	copy(header[8:12], "WAVE")
+	copy(header[12:16], "fmt ")
+	binary.LittleEndian.PutUint32(header[16:20], 16)
+	binary.LittleEndian.PutUint16(header[20:22], 1)
+	binary.LittleEndian.PutUint16(header[22:24], channels)
+	binary.LittleEndian.PutUint32(header[24:28], uint32(sampleRate))
+	binary.LittleEndian.PutUint32(header[28:32], uint32(byteRate))
+	binary.LittleEndian.PutUint16(header[32:34], uint16(blockAlign))
+	binary.LittleEndian.PutUint16(header[34:36], bitsPerSample)
+	copy(header[36:40], "data")
+	binary.LittleEndian.PutUint32(header[40:44], uint32(dataSize))
+
+	if _, err := file.Write(header); err != nil {
+		return fmt.Errorf("write WAV header: %w", err)
+	}
+
+	if err := binary.Write(file, binary.LittleEndian, samples); err != nil {
+		return fmt.Errorf("write WAV samples: %w", err)
+	}
+
+	return nil
 }
