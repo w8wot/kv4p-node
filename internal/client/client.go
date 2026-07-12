@@ -72,3 +72,7 @@ func (c *Client) ReadFrame() (kiss.Frame, error) {
 		}
 	}
 }
+
+func (c *Client) ResetDevice() error {
+	return c.transport.ResetDevice()
+}

@@ -1,6 +1,8 @@
 package transport
 
 import (
+	"time"
+
 	"go.bug.st/serial"
 )
 
@@ -33,4 +35,29 @@ func (t *Transport) Write(frame []byte) (int, error) {
 
 func (t *Transport) Read(buf []byte) (int, error) {
 	return t.port.Read(buf)
+}
+
+func (t *Transport) ResetDevice() error {
+	if err := t.port.SetDTR(false); err != nil {
+		return err
+	}
+	if err := t.port.SetRTS(true); err != nil {
+		return err
+	}
+
+	time.Sleep(100 * time.Millisecond)
+
+	if err := t.port.SetDTR(true); err != nil {
+		return err
+	}
+	if err := t.port.SetRTS(false); err != nil {
+		return err
+	}
+
+	time.Sleep(100 * time.Millisecond)
+
+	if err := t.port.SetDTR(false); err != nil {
+		return err
+	}
+	return t.port.SetRTS(true)
 }
