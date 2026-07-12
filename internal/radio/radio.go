@@ -115,6 +115,7 @@ func (r *Radio) ConfigureReceive(frequencyMHz float32, squelch byte) error {
 	r.desired.TXFrequencyMHz = frequencyMHz
 	r.desired.RXFrequencyMHz = frequencyMHz
 	r.desired.Squelch = squelch
+	r.desired.Bandwidth = 1
 	r.desired.Flags =
 		protocol.HostStateRadioConfigValid |
 			protocol.HostStateRXAudioOpen |

@@ -9,16 +9,22 @@ import (
 	"time"
 
 	"github.com/w8wot/kv4p-node/internal/audio"
+	"github.com/w8wot/kv4p-node/internal/client"
 	"github.com/w8wot/kv4p-node/internal/protocol"
-	"github.com/w8wot/kv4p-node/internal/radio"
+	"github.com/w8wot/kv4p-node/internal/transport"
 )
 
 const (
+	// radioBandwidth controls the FM channel width:
+	// 1 = 25 kHz wide FM, standard for normal 2-meter amateur FM
+	// 0 = 12.5 kHz narrow FM; change only when narrow operation is required
+	radioBandwidth byte = 1
+
 	startRSSI = 80
 	stopRSSI  = 60
 	stopCount = 3
 
-	maxPackets = 750 // About 30 seconds at 40 ms per packet
+	maxPackets = 750
 	minPackets = 3
 )
 
@@ -28,25 +34,63 @@ func main() {
 	output := flag.String("output", "kv4p-capture.wav", "Output WAV filename")
 	flag.Parse()
 
+	if *squelch < 0 || *squelch > 8 {
+		log.Fatal("squelch must be between 0 and 8")
+	}
+
 	decoder, err := audio.NewDecoder()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	log.Println("Press the KV4P EN/RESET button once.")
-
-	r, err := radio.Connect("")
+	portName, err := transport.FindKV4P()
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer r.Close()
 
-	if err := r.ConfigureReceive(float32(*freq), byte(*squelch)); err != nil {
+	log.Printf("Opening %s without resetting", portName)
+
+	c, err := client.Connect(portName)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer c.Close()
+
+	sequence := uint32(time.Now().Unix())
+
+	desired := protocol.HostDesiredState{
+		Sequence: sequence,
+		MemoryID: -1,
+		Flags: protocol.HostStateRadioConfigValid |
+			protocol.HostStateRSSIEnabled |
+			protocol.HostStateFilterHigh |
+			protocol.HostStateFilterLow |
+			protocol.HostStateStatusReports,
+		Bandwidth:      radioBandwidth,
+		TXFrequencyMHz: float32(*freq),
+		RXFrequencyMHz: float32(*freq),
+		Squelch:        byte(*squelch),
+	}
+
+	if err := sendDesiredAndWait(c, desired); err != nil {
 		log.Fatal(err)
 	}
 
 	log.Printf(
-		"Waiting on %.3f MHz: RX start >= %d, RX stop <= %d",
+		"Radio configuration applied: bandwidth=%d frequency=%.3f MHz",
+		desired.Bandwidth,
+		*freq,
+	)
+
+	desired.Sequence++
+	desired.Flags |= protocol.HostStateRXAudioOpen
+
+	if err := sendDesiredAndWait(c, desired); err != nil {
+		log.Fatal(err)
+	}
+
+	log.Printf(
+		"Waiting on %.3f MHz without reset: RX start >= %d, RX stop <= %d",
 		*freq,
 		startRSSI,
 		stopRSSI,
@@ -59,15 +103,36 @@ func main() {
 	)
 
 	for {
-		vendor, err := r.ReadVendorFrame()
+		kissFrame, err := c.ReadFrame()
 		if err != nil {
 			log.Fatal(err)
+		}
+
+		vendor, err := protocol.DecodeVendorFrame(kissFrame)
+		if err != nil {
+			continue
 		}
 
 		switch vendor.Command {
 		case protocol.CommandRxAudio:
 			if !receiving {
 				continue
+			}
+
+			packetNumber := len(packets) + 1
+
+			if packetNumber <= 10 || len(vendor.Payload) <= 10 {
+				previewLength := len(vendor.Payload)
+				if previewLength > 24 {
+					previewLength = 24
+				}
+
+				log.Printf(
+					"Opus packet %d: length=%d bytes, first=% x",
+					packetNumber,
+					len(vendor.Payload),
+					vendor.Payload[:previewLength],
+				)
 			}
 
 			if len(packets) < maxPackets {
@@ -88,7 +153,6 @@ func main() {
 				log.Printf("Radio error: %d", state.LastError)
 				continue
 			}
-
 			rssi := int(state.LatestRSSI)
 
 			if !receiving {
@@ -112,11 +176,14 @@ func main() {
 			}
 
 			receiving = false
+			lowRSSICount = 0
 
 			if len(packets) < minPackets {
-				log.Printf("Ignoring short reception: %d packets", len(packets))
+				log.Printf(
+					"Ignoring short reception: %d packets",
+					len(packets),
+				)
 				packets = nil
-				lowRSSICount = 0
 				continue
 			}
 
@@ -130,6 +197,77 @@ func main() {
 			return
 		}
 	}
+}
+
+func sendDesiredAndWait(
+	c *client.Client,
+	state protocol.HostDesiredState,
+) error {
+	frame, err := protocol.EncodeDesiredStateFrame(state)
+	if err != nil {
+		return fmt.Errorf("encode desired state: %w", err)
+	}
+
+	const maxAttempts = 3
+
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		if err := c.Write(frame); err != nil {
+			return fmt.Errorf("send desired state: %w", err)
+		}
+
+		stateReports := 0
+		lastError := byte(0)
+
+		for stateReports < 25 {
+			kissFrame, err := c.ReadFrame()
+			if err != nil {
+				return fmt.Errorf("wait for desired state: %w", err)
+			}
+
+			vendor, err := protocol.DecodeVendorFrame(kissFrame)
+			if err != nil ||
+				vendor.Command != protocol.CommandDeviceState {
+				continue
+			}
+
+			applied, err := protocol.ParseDeviceState(vendor.Payload)
+			if err != nil {
+				continue
+			}
+
+			stateReports++
+			lastError = applied.LastError
+
+			if applied.LastError != 0 {
+				continue
+			}
+
+			if applied.AppliedSequence != state.Sequence {
+				continue
+			}
+
+			if applied.Bandwidth != state.Bandwidth ||
+				applied.TXFrequencyMHz != state.TXFrequencyMHz ||
+				applied.RXFrequencyMHz != state.RXFrequencyMHz ||
+				applied.Squelch != state.Squelch {
+				continue
+			}
+
+			return nil
+		}
+
+		log.Printf(
+			"Desired state not applied; retry %d/%d, last radio error=%d",
+			attempt,
+			maxAttempts,
+			lastError,
+		)
+	}
+
+	return fmt.Errorf(
+		"radio did not apply desired state after %d attempts",
+		maxAttempts,
+	)
 }
 
 func decodeToWAV(
@@ -159,7 +297,8 @@ func decodeToWAV(
 	}
 
 	duration := time.Duration(
-		float64(len(pcm)) / float64(audio.SampleRate) *
+		float64(len(pcm)) /
+			float64(audio.SampleRate) *
 			float64(time.Second),
 	)
 
