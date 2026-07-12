@@ -2,3 +2,6 @@
 # Local KV4P test artifacts
 /kv4p-*
 /*.wav
+
+# Local built command binaries
+/hello
