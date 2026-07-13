@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -69,22 +70,19 @@ func main() {
 		log.Fatal(err)
 	}
 
-	interrupt := make(chan os.Signal, 1)
-	signal.Notify(interrupt, os.Interrupt)
-	defer signal.Stop(interrupt)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
 
-	go func() {
-		<-interrupt
-		log.Println("Interrupt received: releasing PTT and closing radio")
+	defer func() {
+		log.Println("Releasing PTT before shutdown")
 
-		cleanup := desired
-		cleanup.Sequence++
-		cleanup.Flags &^= protocol.HostStatePTTRequested
-		cleanup.Flags |= protocol.HostStateRXAudioOpen
+		desired.Sequence++
+		desired.Flags &^= protocol.HostStatePTTRequested
+		desired.Flags |= protocol.HostStateRXAudioOpen
 
-		_ = sendDesired(c, cleanup)
-		_ = c.Close()
-		os.Exit(130)
+		if err := sendDesired(c, desired); err != nil {
+			log.Printf("Release PTT during shutdown: %v", err)
+		}
 	}()
 
 	log.Printf(
@@ -102,6 +100,13 @@ func main() {
 	)
 
 	for {
+		select {
+		case <-ctx.Done():
+			log.Println("Interrupt received: shutting down")
+			return
+		default:
+		}
+
 		kissFrame, err := c.ReadFrame()
 		if err != nil {
 			log.Fatal(err)
