@@ -11,6 +11,7 @@ import (
 
 	"github.com/w8wot/kv4p-node/internal/client"
 	"github.com/w8wot/kv4p-node/internal/protocol"
+	"github.com/w8wot/kv4p-node/internal/radio"
 	"github.com/w8wot/kv4p-node/internal/transport"
 )
 
@@ -48,10 +49,8 @@ func main() {
 	}
 	defer c.Close()
 
-	sequence := uint32(time.Now().Unix())
-
 	desired := protocol.HostDesiredState{
-		Sequence: sequence,
+		Sequence: uint32(time.Now().Unix()),
 		MemoryID: -1,
 		Flags: protocol.HostStateRadioConfigValid |
 			protocol.HostStateRXAudioOpen |
@@ -66,12 +65,10 @@ func main() {
 		Squelch:        byte(*squelch),
 	}
 
-	if err := sendDesired(c, desired); err != nil {
-		log.Fatal(err)
-	}
+	controller := radio.NewStateController(c, desired)
 
 	startupCtx, cancelStartup := context.WithTimeout(context.Background(), 3*time.Second)
-	err = waitForAppliedState(startupCtx, c, desired.Sequence)
+	err = controller.Apply(startupCtx)
 	cancelStartup()
 	if err != nil {
 		log.Fatalf("Confirm startup state: %v", err)
@@ -83,11 +80,13 @@ func main() {
 	defer func() {
 		log.Println("Releasing PTT before shutdown")
 
-		desired.Sequence++
-		desired.Flags &^= protocol.HostStatePTTRequested
-		desired.Flags |= protocol.HostStateRXAudioOpen
+		cleanupCtx, cancelCleanup := context.WithTimeout(
+			context.Background(),
+			3*time.Second,
+		)
+		defer cancelCleanup()
 
-		if err := sendDesired(c, desired); err != nil {
+		if err := controller.SetPTT(cleanupCtx, false); err != nil {
 			log.Printf("Release PTT during shutdown: %v", err)
 		}
 	}()
@@ -202,16 +201,15 @@ func main() {
 			captured := packets
 			packets = nil
 
-			sequence++
-
-			if err := replay(c, &desired, sequence, captured); err != nil {
+			if err := replay(c, controller, captured); err != nil {
 				log.Printf("Replay failed: %v", err)
 
-				sequence++
-				desired.Sequence = sequence
-				desired.Flags &^= protocol.HostStatePTTRequested
-				desired.Flags |= protocol.HostStateRXAudioOpen
-				_ = sendDesired(c, desired)
+				recoveryCtx, cancelRecovery := context.WithTimeout(
+					context.Background(),
+					3*time.Second,
+				)
+				_ = controller.SetPTT(recoveryCtx, false)
+				cancelRecovery()
 			}
 
 			cooldownUntil = time.Now().Add(postTXCooldown)
@@ -221,18 +219,19 @@ func main() {
 
 func replay(
 	c *client.Client,
-	desired *protocol.HostDesiredState,
-	sequence uint32,
+	controller *radio.StateController,
 	packets [][]byte,
 ) error {
 	time.Sleep(preTXDelay)
 
-	desired.Sequence = sequence
-	desired.Flags |= protocol.HostStatePTTRequested
-	desired.Flags &^= protocol.HostStateRXAudioOpen
-
 	log.Println("PTT down")
-	if err := sendDesired(c, *desired); err != nil {
+	pttDownCtx, cancelPTTDown := context.WithTimeout(
+		context.Background(),
+		3*time.Second,
+	)
+	err := controller.SetPTT(pttDownCtx, true)
+	cancelPTTDown()
+	if err != nil {
 		return err
 	}
 
@@ -257,55 +256,17 @@ func replay(
 
 	time.Sleep(postAudioDelay)
 
-	desired.Sequence++
-	desired.Flags &^= protocol.HostStatePTTRequested
-	desired.Flags |= protocol.HostStateRXAudioOpen
-
 	log.Println("PTT up")
-	if err := sendDesired(c, *desired); err != nil {
+	pttUpCtx, cancelPTTUp := context.WithTimeout(
+		context.Background(),
+		3*time.Second,
+	)
+	err = controller.SetPTT(pttUpCtx, false)
+	cancelPTTUp()
+	if err != nil {
 		return err
 	}
 
 	log.Println("Replay completed")
 	return nil
-}
-
-func sendDesired(c *client.Client, state protocol.HostDesiredState) error {
-	frame, err := protocol.EncodeDesiredStateFrame(state)
-	if err != nil {
-		return err
-	}
-
-	return c.Write(frame)
-}
-
-func waitForAppliedState(
-	ctx context.Context,
-	c *client.Client,
-	sequence uint32,
-) error {
-	for {
-		frame, err := c.ReadFrameContext(ctx)
-		if err != nil {
-			return err
-		}
-
-		vendor, err := protocol.DecodeVendorFrame(frame)
-		if err != nil || vendor.Command != protocol.CommandDeviceState {
-			continue
-		}
-
-		state, err := protocol.ParseDeviceState(vendor.Payload)
-		if err != nil {
-			return fmt.Errorf("parse device state: %w", err)
-		}
-
-		if state.LastError != 0 {
-			return fmt.Errorf("radio reported error %d", state.LastError)
-		}
-
-		if state.AppliedSequence == sequence {
-			return nil
-		}
-	}
 }
