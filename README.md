@@ -137,3 +137,30 @@ For more representative bench testing:
 - For the most repeatable bench testing, use appropriate RF attenuation or a dummy load/coupler instead of over-the-air testing.
 
 These recommendations are intended for bench testing. Always perform a final verification under normal operating conditions representative of your intended deployment.
+
+## First-Time Setup
+
+The node configures the KV4P-HT at startup by applying its required operating state, including frequency, squelch, RX/TX permissions, and related settings. No board-specific configuration files are required.
+
+Before starting the node:
+
+1. Connect the KV4P-HT to the Raspberry Pi using a USB data cable.
+2. Connect an antenna appropriate for the operating frequency.
+3. Ensure no other application is using the KV4P-HT serial port.
+4. Start the `kv4p-parrot` service or run the application manually.
+
+Verify that the node started successfully with:
+
+    systemctl status kv4p-parrot --no-pager
+
+or
+
+    journalctl -u kv4p-parrot -n 20 --no-pager
+
+A successful startup will report that the parrot is ready before accepting transmissions.
+
+### Current Compatibility
+
+This project has been validated with a KV4P-HT board running compatible firmware and previously used with this software.
+
+Testing with additional KV4P-HT boards, including factory-fresh hardware and boards transitioning directly from handheld operation, is ongoing. If you encounter startup issues with a new board, please open a GitHub issue and include the startup log so we can improve compatibility and documentation.
