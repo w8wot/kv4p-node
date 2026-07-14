@@ -7,10 +7,24 @@ import (
 	"github.com/w8wot/kv4p-node/internal/transport"
 )
 
+type Transport interface {
+	Read([]byte) (int, error)
+	Write([]byte) (int, error)
+	Close() error
+	ResetDevice() error
+}
+
 type Client struct {
-	transport *transport.Transport
+	transport Transport
 	parser    *kiss.Parser
 	pending   []kiss.Frame
+}
+
+func New(t Transport) *Client {
+	return &Client{
+		transport: t,
+		parser:    kiss.NewParser(),
+	}
 }
 
 func Connect(port string) (*Client, error) {
@@ -19,10 +33,7 @@ func Connect(port string) (*Client, error) {
 		return nil, err
 	}
 
-	return &Client{
-		transport: t,
-		parser:    kiss.NewParser(),
-	}, nil
+	return New(t), nil
 }
 
 func (c *Client) Close() error {
