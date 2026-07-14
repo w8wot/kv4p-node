@@ -115,3 +115,44 @@ func TestReadFrameQueuesAdditionalFrames(t *testing.T) {
 		t.Fatalf("transport reads = %d, want 1", transport.readIndex)
 	}
 }
+
+type shortWriteTransport struct {
+	fakeTransport
+}
+
+func (s *shortWriteTransport) Write(data []byte) (int, error) {
+	if len(data) == 0 {
+		return 0, nil
+	}
+	return len(data) - 1, nil
+}
+
+func TestWriteReturnsShortWrite(t *testing.T) {
+	transport := &shortWriteTransport{}
+	client := New(transport)
+
+	err := client.Write([]byte{0x01, 0x02, 0x03})
+	if err != io.ErrShortWrite {
+		t.Fatalf("Write() error = %v, want %v", err, io.ErrShortWrite)
+	}
+}
+
+type readErrorTransport struct {
+	fakeTransport
+	err error
+}
+
+func (r *readErrorTransport) Read([]byte) (int, error) {
+	return 0, r.err
+}
+
+func TestReadFrameReturnsTransportError(t *testing.T) {
+	wantErr := io.ErrUnexpectedEOF
+	transport := &readErrorTransport{err: wantErr}
+	client := New(transport)
+
+	_, err := client.ReadFrame()
+	if err != wantErr {
+		t.Fatalf("ReadFrame() error = %v, want %v", err, wantErr)
+	}
+}
