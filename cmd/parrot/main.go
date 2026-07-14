@@ -107,8 +107,12 @@ func main() {
 		default:
 		}
 
-		kissFrame, err := c.ReadFrame()
+		kissFrame, err := c.ReadFrameContext(ctx)
 		if err != nil {
+			if ctx.Err() != nil {
+				log.Println("Interrupt received: shutting down")
+				return
+			}
 			log.Fatal(err)
 		}
 
