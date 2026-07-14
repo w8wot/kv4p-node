@@ -2,6 +2,7 @@ package client
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"testing"
 
@@ -154,5 +155,32 @@ func TestReadFrameReturnsTransportError(t *testing.T) {
 	_, err := client.ReadFrame()
 	if err != wantErr {
 		t.Fatalf("ReadFrame() error = %v, want %v", err, wantErr)
+	}
+}
+
+type cancellingTransport struct {
+	fakeTransport
+	cancel context.CancelFunc
+	reads  int
+}
+
+func (t *cancellingTransport) Read([]byte) (int, error) {
+	t.reads++
+	t.cancel()
+	return 0, nil
+}
+
+func TestReadFrameContextReturnsCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	transport := &cancellingTransport{cancel: cancel}
+	client := New(transport)
+
+	_, err := client.ReadFrameContext(ctx)
+	if err != context.Canceled {
+		t.Fatalf("ReadFrameContext() error = %v, want %v", err, context.Canceled)
+	}
+
+	if transport.reads != 1 {
+		t.Fatalf("transport reads = %d, want 1", transport.reads)
 	}
 }

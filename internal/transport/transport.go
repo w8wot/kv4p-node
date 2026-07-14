@@ -20,6 +20,11 @@ func Open(portName string) (*Transport, error) {
 		return nil, err
 	}
 
+	if err := port.SetReadTimeout(250 * time.Millisecond); err != nil {
+		_ = port.Close()
+		return nil, err
+	}
+
 	return &Transport{
 		port: port,
 	}, nil

@@ -1,6 +1,7 @@
 package client
 
 import (
+	"context"
 	"io"
 
 	"github.com/w8wot/kv4p-node/internal/kiss"
@@ -53,6 +54,10 @@ func (c *Client) Write(frame []byte) error {
 }
 
 func (c *Client) ReadFrame() (kiss.Frame, error) {
+	return c.ReadFrameContext(context.Background())
+}
+
+func (c *Client) ReadFrameContext(ctx context.Context) (kiss.Frame, error) {
 	if len(c.pending) > 0 {
 		frame := c.pending[0]
 		c.pending = c.pending[1:]
@@ -62,6 +67,10 @@ func (c *Client) ReadFrame() (kiss.Frame, error) {
 	buf := make([]byte, 512)
 
 	for {
+		if err := ctx.Err(); err != nil {
+			return kiss.Frame{}, err
+		}
+
 		n, readErr := c.transport.Read(buf)
 
 		if n > 0 {
@@ -80,6 +89,10 @@ func (c *Client) ReadFrame() (kiss.Frame, error) {
 
 		if readErr != nil {
 			return kiss.Frame{}, readErr
+		}
+
+		if err := ctx.Err(); err != nil {
+			return kiss.Frame{}, err
 		}
 	}
 }
