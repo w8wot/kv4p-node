@@ -70,6 +70,13 @@ func main() {
 		log.Fatal(err)
 	}
 
+	startupCtx, cancelStartup := context.WithTimeout(context.Background(), 3*time.Second)
+	err = waitForAppliedState(startupCtx, c, desired.Sequence)
+	cancelStartup()
+	if err != nil {
+		log.Fatalf("Confirm startup state: %v", err)
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
@@ -270,4 +277,35 @@ func sendDesired(c *client.Client, state protocol.HostDesiredState) error {
 	}
 
 	return c.Write(frame)
+}
+
+func waitForAppliedState(
+	ctx context.Context,
+	c *client.Client,
+	sequence uint32,
+) error {
+	for {
+		frame, err := c.ReadFrameContext(ctx)
+		if err != nil {
+			return err
+		}
+
+		vendor, err := protocol.DecodeVendorFrame(frame)
+		if err != nil || vendor.Command != protocol.CommandDeviceState {
+			continue
+		}
+
+		state, err := protocol.ParseDeviceState(vendor.Payload)
+		if err != nil {
+			return fmt.Errorf("parse device state: %w", err)
+		}
+
+		if state.LastError != 0 {
+			return fmt.Errorf("radio reported error %d", state.LastError)
+		}
+
+		if state.AppliedSequence == sequence {
+			return nil
+		}
+	}
 }
