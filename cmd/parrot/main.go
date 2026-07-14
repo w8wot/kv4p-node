@@ -40,7 +40,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	log.Printf("Opening %s without resetting", portName)
+	log.Printf("Opening %s and waiting for radio", portName)
 
 	c, err := client.Connect(portName)
 	if err != nil {
@@ -48,7 +48,21 @@ func main() {
 	}
 	defer c.Close()
 
-	sequence := uint32(time.Now().Unix())
+	helloCtx, cancelHello := context.WithTimeout(context.Background(), 10*time.Second)
+	hello, err := waitForHello(helloCtx, c)
+	cancelHello()
+	if err != nil {
+		log.Fatalf("Wait for HELLO after reset: %v", err)
+	}
+
+	log.Printf(
+		"Radio ready: protocol %d, range %.3f-%.3f MHz",
+		hello.Version,
+		hello.MinFrequencyMHz,
+		hello.MaxFrequencyMHz,
+	)
+
+	sequence := hello.DeviceState.AppliedSequence + 1
 
 	desired := protocol.HostDesiredState{
 		Sequence: sequence,
@@ -270,4 +284,25 @@ func sendDesired(c *client.Client, state protocol.HostDesiredState) error {
 	}
 
 	return c.Write(frame)
+}
+
+func waitForHello(ctx context.Context, c *client.Client) (protocol.Hello, error) {
+	for {
+		frame, err := c.ReadFrameContext(ctx)
+		if err != nil {
+			return protocol.Hello{}, err
+		}
+
+		vendor, err := protocol.DecodeVendorFrame(frame)
+		if err != nil || vendor.Command != protocol.CommandHello {
+			continue
+		}
+
+		hello, err := protocol.ParseHello(vendor.Payload)
+		if err != nil {
+			return protocol.Hello{}, fmt.Errorf("parse HELLO: %w", err)
+		}
+
+		return hello, nil
+	}
 }
