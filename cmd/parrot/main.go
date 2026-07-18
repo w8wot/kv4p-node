@@ -119,7 +119,8 @@ func main() {
 				log.Println("Interrupt received: shutting down")
 				return
 			}
-			log.Fatal(err)
+			log.Printf("Radio read failed: %v", err)
+			return
 		}
 
 		vendor, err := protocol.DecodeVendorFrame(kissFrame)
