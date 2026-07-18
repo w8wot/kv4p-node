@@ -1,14 +1,30 @@
 # kv4p-node
 
-Go tools and protocol helpers for talking to a KV4P-HT radio board over USB serial using KV4P/KISS vendor frames.
+A lightweight Go toolkit for building analog FM applications with the KV4P-HT radio board.
 
-This repository includes tools for:
+The primary application is a portable simplex parrot that records a transmission and immediately plays it back, allowing amateur radio operators to evaluate transmitted audio, compare radios, and demonstrate equipment in the field.
 
-- detecting and reading KV4P HELLO information
-- applying desired radio state
-- monitoring device-state and RX audio frames
-- recording received audio to WAV
-- running an analog FM parrot capture/replay tool
+The repository also contains the protocol implementation, reusable libraries, and diagnostic utilities used to communicate with the KV4P-HT over USB serial using KV4P/KISS vendor frames.
+
+## Features
+
+- Portable analog FM simplex parrot
+- KV4P/KISS protocol implementation
+- Radio configuration and state management
+- Receive audio monitoring and WAV recording
+- Diagnostic and protocol analysis utilities
+- Automated tests for core protocol and state management
+
+## Project Status
+
+This project is under active development and has been successfully tested by the author on Raspberry Pi hardware using analog FM. It is suitable for experimentation and testing by experienced amateur radio operators.
+
+Current development focuses on:
+
+- Reliability and recovery
+- Portable deployment
+- Configuration improvements
+- Documentation and usability
 
 ## Hardware
 
@@ -17,150 +33,75 @@ Developed and tested with:
 - Raspberry Pi Zero 2 W
 - KV4P-HT board over USB serial
 - Yaesu FT5DR using analog FM
-- 2 meter simplex testing, for example `146.520 MHz`
+- 2-meter simplex testing (for example `146.520 MHz`)
 
 The KV4P board normally appears as `/dev/ttyUSB0`.
 
-On Raspberry Pi OS, the user running the tools usually needs to be in the `dialout` group.
+On Raspberry Pi OS, the user running the tools usually needs to be a member of the `dialout` group.
 
 ## Requirements
 
 - Go
 - KV4P-HT board connected over USB
 - Serial device access permissions
-- Opus support for Go package `gopkg.in/hraban/opus.v2`
+- Opus support for `gopkg.in/hraban/opus.v2`
 
 ## Build
 
-Build the main parrot tool:
+Build the main parrot application:
 
-~~~bash
+```bash
 go build -o kv4p-parrot ./cmd/parrot
-~~~
+```
 
-Build the diagnostic capture parrot:
+Build the capture-and-record diagnostic tool:
 
-~~~bash
+```bash
 go build -o kv4p-capture-parrot ./cmd/capture-parrot
-~~~
+```
 
 Run all tests:
 
-~~~bash
+```bash
 go test ./...
-~~~
+```
 
-## Common commands
+## Supported Applications and Commands
+
+### Simplex Parrot
+
+Run the primary analog FM parrot application:
+
+```bash
+go run ./cmd/parrot
+```
+
+### Diagnostic Utilities
 
 Read KV4P HELLO information:
 
-~~~bash
+```bash
 go run ./cmd/hello
-~~~
+```
 
 Configure receive:
 
-~~~bash
+```bash
 go run ./cmd/rx-config --freq 146.520 --squelch 3
-~~~
+```
 
 Monitor RX audio and state frames:
 
-~~~bash
+```bash
 go run ./cmd/monitor --freq 146.520 --squelch 3
-~~~
+```
 
-Record received audio to WAV:
+Record received audio to a WAV file:
 
-~~~bash
+```bash
 go run ./cmd/record --freq 146.520 --squelch 3 --output kv4p-capture.wav
-~~~
-
-Run the FM parrot:
-
-~~~bash
-./kv4p-parrot -freq 146.520 -squelch 3
-~~~
-
-Run the diagnostic capture parrot:
-
-~~~bash
-./kv4p-capture-parrot -freq 146.520 -squelch 3 -output live-capture.wav
-~~~
-
-## FM parrot
-
-The parrot listens for analog FM audio, stores the received audio packets, keys PTT, replays the captured audio, then returns to listening.
-
-Replay uses 40 ms packet pacing to match the received Opus frame duration.
-
-Detailed parrot notes are in:
-
-- [`docs/parrot.md`](docs/parrot.md)
-
-## Offline use
-
-Once built, the parrot does not require Internet access.
-
-It only needs:
-
-- the local host
-- the KV4P board
-- USB serial access
-- RF hardware
-- power
-
-Internet is only needed for cloning, updating, installing dependencies, or transferring saved captures over the network.
-
-## Development status
-
-This is experimental ham radio tooling for KV4P-HT development and testing.
+```
 
 ## License
 
-This project is licensed under the MIT License. See the `LICENSE` file for details.
-
-## Disclaimer
-
-This is an independent, community-developed project and is not affiliated with
-or endorsed by the KV4P-HT project or its maintainers.
-
-## Close-Range RF Testing
-
-During development we observed that over-the-air bench testing with a transmitting radio only a few feet from the KV4P node can produce degraded or "picketing" audio. In our testing, increasing separation between the transmitting radio and the node, or reducing RF coupling, consistently improved the received audio.
-
-For more representative bench testing:
-
-- Maintain reasonable physical separation between the transmitting radio and the KV4P node.
-- Reduce transmit power when practical.
-- If close-range testing is necessary, reducing RF coupling, for example by using a stubby antenna, may produce more representative results.
-- For the most repeatable bench testing, use appropriate RF attenuation or a dummy load/coupler instead of over-the-air testing.
-
-These recommendations are intended for bench testing. Always perform a final verification under normal operating conditions representative of your intended deployment.
-
-## First-Time Setup
-
-The node configures the KV4P-HT at startup by applying its required operating state, including frequency, squelch, RX/TX permissions, and related settings. No board-specific configuration files are required.
-
-Before starting the node:
-
-1. Connect the KV4P-HT to the Raspberry Pi using a USB data cable.
-2. Connect an antenna appropriate for the operating frequency.
-3. Ensure no other application is using the KV4P-HT serial port.
-4. Start the `kv4p-parrot` service or run the application manually.
-
-Verify that the node started successfully with:
-
-    systemctl status kv4p-parrot --no-pager
-
-or
-
-    journalctl -u kv4p-parrot -n 20 --no-pager
-
-A successful startup will report that the parrot is ready before accepting transmissions.
-
-### Current Compatibility
-
-This project has been validated with a KV4P-HT board running compatible firmware and previously used with this software.
-
-Testing with additional KV4P-HT boards, including factory-fresh hardware and boards transitioning directly from handheld operation, is ongoing. If you encounter startup issues with a new board, please open a GitHub issue and include the startup log so we can improve compatibility and documentation.
+See the LICENSE file for licensing information.
