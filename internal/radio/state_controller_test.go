@@ -208,3 +208,45 @@ func TestStateControllerApplyAcceptsMatchingSequenceWithRadioError(t *testing.T)
 		)
 	}
 }
+
+func TestStateControllerApplyWaitsPastRadioErrorUntilMatchingSequence(t *testing.T) {
+	desired := protocol.HostDesiredState{
+		Sequence: 42,
+		MemoryID: -1,
+		Flags:    protocol.HostStateRXAudioOpen,
+	}
+
+	transport := &fakeTransport{
+		reads: [][]byte{
+			encodedDeviceState(t, protocol.DeviceState{
+				AppliedSequence: 41,
+				LastError:       protocol.DeviceStateErrorRadioConfigFailed,
+			}),
+			encodedDeviceState(t, protocol.DeviceState{
+				AppliedSequence: 42,
+				LastError:       protocol.DeviceStateErrorNone,
+			}),
+		},
+	}
+
+	controller := NewStateController(client.New(transport), desired)
+
+	if err := controller.Apply(context.Background()); err != nil {
+		t.Fatalf("Apply returned error: %v", err)
+	}
+
+	if controller.State.AppliedSequence != 42 {
+		t.Fatalf(
+			"applied sequence = %d, want 42",
+			controller.State.AppliedSequence,
+		)
+	}
+
+	if controller.State.LastError != protocol.DeviceStateErrorNone {
+		t.Fatalf(
+			"last error = %s, want %s",
+			controller.State.LastError,
+			protocol.DeviceStateErrorNone,
+		)
+	}
+}
