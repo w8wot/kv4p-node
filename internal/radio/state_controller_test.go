@@ -64,7 +64,7 @@ func encodedDeviceState(t *testing.T, state protocol.DeviceState) []byte {
 	payload[21] = state.CTCSSRX
 	payload[22] = state.RadioStatus
 	payload[23] = state.Mode
-	payload[24] = state.LastError
+	payload[24] = byte(state.LastError)
 	payload[25] = state.LatestRSSI
 
 	return protocol.EncodeVendorFrame(

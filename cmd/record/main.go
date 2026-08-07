@@ -149,8 +149,8 @@ func main() {
 				continue
 			}
 
-			if state.LastError != 0 {
-				log.Printf("Radio error: %d", state.LastError)
+			if state.LastError != protocol.DeviceStateErrorNone {
+				log.Printf("Radio error: %s", state.LastError)
 				continue
 			}
 			rssi := int(state.LatestRSSI)
@@ -216,7 +216,7 @@ func sendDesiredAndWait(
 		}
 
 		stateReports := 0
-		lastError := byte(0)
+		lastError := protocol.DeviceStateErrorNone
 
 		for stateReports < 25 {
 			kissFrame, err := c.ReadFrame()
@@ -238,7 +238,7 @@ func sendDesiredAndWait(
 			stateReports++
 			lastError = applied.LastError
 
-			if applied.LastError != 0 {
+			if applied.LastError != protocol.DeviceStateErrorNone {
 				continue
 			}
 
@@ -257,7 +257,7 @@ func sendDesiredAndWait(
 		}
 
 		log.Printf(
-			"Desired state not applied; retry %d/%d, last radio error=%d",
+			"Desired state not applied; retry %d/%d, last radio error=%s",
 			attempt,
 			maxAttempts,
 			lastError,

@@ -56,8 +56,8 @@ func (s *StateController) Apply(ctx context.Context) error {
 
 		s.State = state
 
-		if state.LastError != 0 {
-			return fmt.Errorf("radio reported error %d", state.LastError)
+		if state.LastError != protocol.DeviceStateErrorNone {
+			return fmt.Errorf("radio reported error %s", state.LastError)
 		}
 
 		if state.AppliedSequence == s.desired.Sequence {

@@ -103,7 +103,7 @@ func main() {
 		packets        [][]byte
 		lowRSSICount   int
 		cooldownUntil  time.Time
-		lastRadioError byte
+		lastRadioError protocol.DeviceStateError
 	)
 
 	for {
@@ -150,10 +150,10 @@ func main() {
 			}
 
 			if state.LastError != lastRadioError {
-				if state.LastError != 0 {
-					log.Printf("Radio error: %d", state.LastError)
-				} else if lastRadioError != 0 {
-					log.Printf("Radio error cleared: %d", lastRadioError)
+				if state.LastError != protocol.DeviceStateErrorNone {
+					log.Printf("Radio error: %s", state.LastError)
+				} else if lastRadioError != protocol.DeviceStateErrorNone {
+					log.Printf("Radio error cleared: %s", lastRadioError)
 				}
 
 				lastRadioError = state.LastError

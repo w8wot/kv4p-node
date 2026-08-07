@@ -141,8 +141,8 @@ func main() {
 				continue
 			}
 
-			if state.LastError != 0 {
-				log.Printf("Radio error: %d", state.LastError)
+			if state.LastError != protocol.DeviceStateErrorNone {
+				log.Printf("Radio error: %s", state.LastError)
 				continue
 			}
 

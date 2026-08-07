@@ -27,6 +27,28 @@ const (
 	DeviceStateSize       = 26
 )
 
+// DeviceStateError values reported by the KV4P firmware.
+type DeviceStateError byte
+
+const (
+	DeviceStateErrorNone DeviceStateError = iota
+	DeviceStateErrorRadioConfigFailed
+	DeviceStateErrorFiltersFailed
+)
+
+func (e DeviceStateError) String() string {
+	switch e {
+	case DeviceStateErrorNone:
+		return "NONE"
+	case DeviceStateErrorRadioConfigFailed:
+		return "RADIO_CONFIG_FAILED"
+	case DeviceStateErrorFiltersFailed:
+		return "FILTERS_FAILED"
+	default:
+		return fmt.Sprintf("UNKNOWN(%d)", byte(e))
+	}
+}
+
 type DeviceState struct {
 	AppliedSequence uint32
 	MemoryID        int32
@@ -39,7 +61,7 @@ type DeviceState struct {
 	CTCSSRX         byte
 	RadioStatus     byte
 	Mode            byte
-	LastError       byte
+	LastError       DeviceStateError
 	LatestRSSI      byte
 	LatestRSSIValid bool
 }
@@ -72,7 +94,7 @@ func ParseDeviceState(payload []byte) (DeviceState, error) {
 	}
 
 	if len(payload) >= DeviceStateSize {
-		state.LastError = payload[24]
+		state.LastError = DeviceStateError(payload[24])
 		state.LatestRSSI = payload[25]
 		state.LatestRSSIValid = true
 	}
