@@ -161,3 +161,50 @@ func TestStateControllerSetPTTUpdatesFlagsAndSequence(t *testing.T) {
 		)
 	}
 }
+
+func TestStateControllerApplyRetainsStateWhenRadioReportsError(t *testing.T) {
+	desired := protocol.HostDesiredState{
+		Sequence: 42,
+		MemoryID: -1,
+		Flags:    protocol.HostStateRXAudioOpen,
+	}
+
+	transport := &fakeTransport{
+		reads: [][]byte{
+			encodedDeviceState(t, protocol.DeviceState{
+				AppliedSequence: 42,
+				LastError:       7,
+				LatestRSSIValid: true,
+				LatestRSSI:      93,
+			}),
+		},
+	}
+
+	controller := NewStateController(client.New(transport), desired)
+
+	err := controller.Apply(context.Background())
+	if err == nil {
+		t.Fatal("Apply returned nil error, want radio error")
+	}
+
+	if controller.State.AppliedSequence != 42 {
+		t.Fatalf(
+			"applied sequence = %d, want 42",
+			controller.State.AppliedSequence,
+		)
+	}
+
+	if controller.State.LastError != 7 {
+		t.Fatalf(
+			"last error = %d, want 7",
+			controller.State.LastError,
+		)
+	}
+
+	if controller.State.LatestRSSI != 93 {
+		t.Fatalf(
+			"RSSI = %d, want 93",
+			controller.State.LatestRSSI,
+		)
+	}
+}
