@@ -5,8 +5,11 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
+	"sync"
 	"time"
 
 	"github.com/w8wot/kv4p-node/internal/client"
@@ -29,7 +32,195 @@ const (
 
 	maxPackets = 750 // 30 seconds
 	minPackets = 3
+
+	webListenAddress   = ":8080"
+	webMinFrequencyMHz = 144.000
+	webMaxFrequencyMHz = 148.000
 )
+
+type frequencyChangeRequest struct {
+	frequency float32
+	result    chan error
+}
+
+type webState struct {
+	mu        sync.RWMutex
+	frequency float32
+}
+
+func (s *webState) Frequency() float32 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.frequency
+}
+
+func (s *webState) SetFrequency(frequency float32) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.frequency = frequency
+}
+
+func startWebServer(
+	state *webState,
+	changes chan<- frequencyChangeRequest,
+) *http.Server {
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+
+		fmt.Fprintf(w, `<!doctype html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KV4P Portable Parrot</title>
+<style>
+body {
+	font-family: system-ui, sans-serif;
+	max-width: 480px;
+	margin: 40px auto;
+	padding: 0 20px;
+	background: #f5f5f5;
+	color: #222;
+}
+main {
+	background: white;
+	padding: 24px;
+	border-radius: 16px;
+}
+h1 {
+	margin-top: 0;
+}
+.current {
+	font-size: 2rem;
+	font-weight: 700;
+	margin: 8px 0 4px;
+}
+.range {
+	color: #666;
+	margin-bottom: 24px;
+}
+label {
+	display: block;
+	font-weight: 600;
+	margin-bottom: 8px;
+}
+input {
+	box-sizing: border-box;
+	width: 100%%;
+	font-size: 1.25rem;
+	padding: 12px;
+	margin-bottom: 12px;
+}
+button {
+	width: 100%%;
+	font-size: 1.1rem;
+	padding: 12px;
+	cursor: pointer;
+}
+</style>
+</head>
+<body>
+<main>
+<h1>KV4P Portable Parrot</h1>
+<div style="margin-bottom: 20px;">
+<strong>Status:</strong> Ready
+</div>
+<div>Current frequency</div>
+<div class="current">%.3f MHz</div>
+<div class="range">Allowed demo range: %.3f - %.3f MHz</div>
+
+<form method="post" action="/frequency">
+<label for="frequency">New frequency (MHz)</label>
+<input
+	id="frequency"
+	name="frequency"
+	type="number"
+	inputmode="decimal"
+	min="%.3f"
+	max="%.3f"
+	step="0.001"
+	value="%.3f"
+	required
+>
+<button type="submit">Apply Frequency</button>
+</form>
+</main>
+</body>
+</html>`,
+			state.Frequency(),
+			webMinFrequencyMHz,
+			webMaxFrequencyMHz,
+			webMinFrequencyMHz,
+			webMaxFrequencyMHz,
+			state.Frequency(),
+		)
+	})
+
+	mux.HandleFunc("/frequency", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		value, err := strconv.ParseFloat(r.FormValue("frequency"), 32)
+		if err != nil {
+			http.Error(w, "invalid frequency", http.StatusBadRequest)
+			return
+		}
+
+		frequency := float32(value)
+
+		if frequency < webMinFrequencyMHz ||
+			frequency > webMaxFrequencyMHz {
+			http.Error(
+				w,
+				fmt.Sprintf(
+					"frequency must be between %.3f and %.3f MHz",
+					webMinFrequencyMHz,
+					webMaxFrequencyMHz,
+				),
+				http.StatusBadRequest,
+			)
+			return
+		}
+
+		result := make(chan error, 1)
+
+		changes <- frequencyChangeRequest{
+			frequency: frequency,
+			result:    result,
+		}
+
+		if err := <-result; err != nil {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
+
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+	})
+
+	server := &http.Server{
+		Addr:    webListenAddress,
+		Handler: mux,
+	}
+
+	go func() {
+		log.Printf("Web interface listening on http://0.0.0.0%s", webListenAddress)
+
+		if err := server.ListenAndServe(); err != nil &&
+			err != http.ErrServerClosed {
+			log.Printf("Web interface stopped: %v", err)
+		}
+	}()
+
+	return server
+}
 
 func main() {
 	freq := flag.Float64("freq", 146.520, "Simplex frequency in MHz")
@@ -74,6 +265,21 @@ func main() {
 		log.Fatalf("Confirm startup state: %v", err)
 	}
 
+	webState := &webState{
+		frequency: float32(*freq),
+	}
+	frequencyChanges := make(chan frequencyChangeRequest)
+
+	webServer := startWebServer(webState, frequencyChanges)
+	defer func() {
+		shutdownCtx, cancelShutdown := context.WithTimeout(
+			context.Background(),
+			2*time.Second,
+		)
+		defer cancelShutdown()
+		_ = webServer.Shutdown(shutdownCtx)
+	}()
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
@@ -111,6 +317,42 @@ func main() {
 		case <-ctx.Done():
 			log.Println("Interrupt received: shutting down")
 			return
+
+		case request := <-frequencyChanges:
+			if receiving {
+				request.result <- fmt.Errorf(
+					"cannot change frequency while receiving",
+				)
+				continue
+			}
+
+			changeCtx, cancelChange := context.WithTimeout(
+				context.Background(),
+				3*time.Second,
+			)
+
+			err := controller.Update(
+				changeCtx,
+				func(desired *protocol.HostDesiredState) {
+					desired.MemoryID = -1
+					desired.TXFrequencyMHz = request.frequency
+					desired.RXFrequencyMHz = request.frequency
+				},
+			)
+
+			cancelChange()
+
+			if err == nil {
+				webState.SetFrequency(request.frequency)
+				log.Printf(
+					"Frequency changed to %.3f MHz from web interface",
+					request.frequency,
+				)
+			}
+
+			request.result <- err
+			continue
+
 		default:
 		}
 
