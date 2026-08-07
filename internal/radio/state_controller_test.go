@@ -162,7 +162,7 @@ func TestStateControllerSetPTTUpdatesFlagsAndSequence(t *testing.T) {
 	}
 }
 
-func TestStateControllerApplyRetainsStateWhenRadioReportsError(t *testing.T) {
+func TestStateControllerApplyAcceptsMatchingSequenceWithRadioError(t *testing.T) {
 	desired := protocol.HostDesiredState{
 		Sequence: 42,
 		MemoryID: -1,
@@ -173,7 +173,7 @@ func TestStateControllerApplyRetainsStateWhenRadioReportsError(t *testing.T) {
 		reads: [][]byte{
 			encodedDeviceState(t, protocol.DeviceState{
 				AppliedSequence: 42,
-				LastError:       7,
+				LastError:       protocol.DeviceStateErrorRadioConfigFailed,
 				LatestRSSIValid: true,
 				LatestRSSI:      93,
 			}),
@@ -182,9 +182,8 @@ func TestStateControllerApplyRetainsStateWhenRadioReportsError(t *testing.T) {
 
 	controller := NewStateController(client.New(transport), desired)
 
-	err := controller.Apply(context.Background())
-	if err == nil {
-		t.Fatal("Apply returned nil error, want radio error")
+	if err := controller.Apply(context.Background()); err != nil {
+		t.Fatalf("Apply returned error for matching applied sequence: %v", err)
 	}
 
 	if controller.State.AppliedSequence != 42 {
@@ -194,10 +193,11 @@ func TestStateControllerApplyRetainsStateWhenRadioReportsError(t *testing.T) {
 		)
 	}
 
-	if controller.State.LastError != 7 {
+	if controller.State.LastError != protocol.DeviceStateErrorRadioConfigFailed {
 		t.Fatalf(
-			"last error = %d, want 7",
+			"last error = %s, want %s",
 			controller.State.LastError,
+			protocol.DeviceStateErrorRadioConfigFailed,
 		)
 	}
 
