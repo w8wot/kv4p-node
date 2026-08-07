@@ -46,6 +46,7 @@ type frequencyChangeRequest struct {
 type webState struct {
 	mu        sync.RWMutex
 	frequency float32
+	status    string
 }
 
 func (s *webState) Frequency() float32 {
@@ -58,6 +59,18 @@ func (s *webState) SetFrequency(frequency float32) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.frequency = frequency
+}
+
+func (s *webState) Status() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.status
+}
+
+func (s *webState) SetStatus(status string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.status = status
 }
 
 func startWebServer(
@@ -78,6 +91,7 @@ func startWebServer(
 <html>
 <head>
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="1">
 <title>KV4P Portable Parrot</title>
 <style>
 body {
@@ -129,7 +143,7 @@ button {
 <main>
 <h1>KV4P Portable Parrot</h1>
 <div style="margin-bottom: 20px;">
-<strong>Status:</strong> Ready
+<strong>Status:</strong> %s
 </div>
 <div>Current frequency</div>
 <div class="current">%.3f MHz</div>
@@ -153,6 +167,7 @@ button {
 </main>
 </body>
 </html>`,
+			state.Status(),
 			state.Frequency(),
 			webMinFrequencyMHz,
 			webMaxFrequencyMHz,
@@ -267,6 +282,7 @@ func main() {
 
 	webState := &webState{
 		frequency: float32(*freq),
+		status:    "Ready",
 	}
 	frequencyChanges := make(chan frequencyChangeRequest)
 
@@ -416,6 +432,7 @@ func main() {
 					receiving = true
 					packets = nil
 					lowRSSICount = 0
+					webState.SetStatus("Receiving")
 					log.Printf("RX started: RSSI %d", rssi)
 				}
 				continue
@@ -437,6 +454,7 @@ func main() {
 			if len(packets) < minPackets {
 				log.Printf("Ignoring short reception: %d packets", len(packets))
 				packets = nil
+				webState.SetStatus("Ready")
 				continue
 			}
 
@@ -449,6 +467,7 @@ func main() {
 
 			captured := packets
 			packets = nil
+			webState.SetStatus("Replaying")
 
 			if err := replay(c, controller, captured); err != nil {
 				log.Printf("Replay failed: %v", err)
@@ -461,6 +480,7 @@ func main() {
 				cancelRecovery()
 			}
 
+			webState.SetStatus("Ready")
 			cooldownUntil = time.Now().Add(postTXCooldown)
 		}
 	}
